@@ -2612,6 +2612,12 @@ void arm_vnode_watch(DlcVnodeWatch& watch, const DlcEntry& entry, size_t entryIn
                                          static_cast<int>(requested), &watch.fds[i]);
         }
         if (rc != SCE_OK) {
+            // Do not assume NOTE_OPEN support when NOTE_READ alone may work.
+            requested = NOTE_READ;
+            rc = ::sceKernelAddFileEvent(watch.queue, fd,
+                                         static_cast<int>(requested), &watch.fds[i]);
+        }
+        if (rc != SCE_OK) {
             dlc_logf("dlc.fs.watch label=%s path=%s status=register-failed rc=0x%08x",
                      entry.label.data, path, static_cast<unsigned>(rc));
             (void)::sceKernelClose(watch.fds[i]);
