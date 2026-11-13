@@ -25,30 +25,14 @@ constexpr int kLogMode = 0666;
 constexpr int kLogFlags =
     SCE_KERNEL_O_WRONLY | SCE_KERNEL_O_CREAT | SCE_KERNEL_O_APPEND;
 
-// The configured path is tried first so a build-time override always wins. It
-// defaults to /app0, which is where this log wants to be: the game's own deploy
-// directory, writable from inside the sandbox and readable over FTP afterwards
-// with no collector involved.
-//
-// THE CLAIM THIS COMMENT USED TO MAKE WAS WRONG. It said /app0 "is the game
-// image and is mounted READ-ONLY, so opening a log there fails". ShadowMountPlus
-// mount_read_only applies to the IMAGE mounts it manages, not to the game's
-// /app0 sandbox, and a later run measured the open succeeding every time.
-// USER: "app0 is not read only."
-//
-// The remaining entries survive only as fallbacks for a build that overrides
-// the path onto a mount that is not present. /download2 leads them because
-// ShadowMountPlus backs it with a directory on /data.
-//
-// /temp0 IS DELIBERATELY NOT A CANDIDATE. It is deleted as the process exits
-// and is unreadable in place over FTP (RETR 550, a uid refusal), so anything
-// landing there needed an outside collector to rescue it -- and the cases most
-// worth logging, a wedge or a hard power-off, never reach that collection.
+// Prefer a persistent, FTP-accessible log on ShadowMountPlus's /data alias.
+// The configured path is tried first so callers may override it at build time.
+// If that directory cannot be written, try the game's /app0 sandbox.
+// Do not assume /download0, /download1, or /download2 exist: dlc_emu does not
+// create those directories, and this PS5 does not expose them over FTP.
 const char* const kLogPaths[] = {
     SCE_DLC_EMU_LOG_PATH,
-    "/download2/dlc_emu.log",
-    "/download1/dlc_emu.log",
-    "/download0/dlc_emu.log",
+    "/app0/dlc_emu.log",
 };
 
 std::atomic<const char*> g_logPath{nullptr};
