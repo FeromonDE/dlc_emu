@@ -25,30 +25,11 @@ constexpr int kLogMode = 0666;
 constexpr int kLogFlags =
     SCE_KERNEL_O_WRONLY | SCE_KERNEL_O_CREAT | SCE_KERNEL_O_APPEND;
 
-// The configured path is tried first so a build-time override always wins. It
-// defaults to /app0, which is where this log wants to be: the game's own deploy
-// directory, writable from inside the sandbox and readable over FTP afterwards
-// with no collector involved.
-//
-// THE CLAIM THIS COMMENT USED TO MAKE WAS WRONG. It said /app0 "is the game
-// image and is mounted READ-ONLY, so opening a log there fails". ShadowMountPlus
-// mount_read_only applies to the IMAGE mounts it manages, not to the game's
-// /app0 sandbox, and a later run measured the open succeeding every time.
-// USER: "app0 is not read only."
-//
-// The remaining entries survive only as fallbacks for a build that overrides
-// the path onto a mount that is not present. /download2 leads them because
-// ShadowMountPlus backs it with a directory on /data.
-//
-// /temp0 IS DELIBERATELY NOT A CANDIDATE. It is deleted as the process exits
-// and is unreadable in place over FTP (RETR 550, a uid refusal), so anything
-// landing there needed an outside collector to rescue it -- and the cases most
-// worth logging, a wedge or a hard power-off, never reach that collection.
+// This title's /app0 is read-only: do not attempt to write logs into the
+// game image or its sandbox. Use only a persistent path under the writable
+// ShadowMountPlus /data alias. Override it with SCE_DLC_EMU_LOG_PATH if needed.
 const char* const kLogPaths[] = {
     SCE_DLC_EMU_LOG_PATH,
-    "/download2/dlc_emu.log",
-    "/download1/dlc_emu.log",
-    "/download0/dlc_emu.log",
 };
 
 std::atomic<const char*> g_logPath{nullptr};
@@ -89,6 +70,17 @@ const char* log_path() {
                 (void)sceKernelClose(fd);
                 break;
             }
+#if SCE_DLC_EMU_LOG_KERNEL_OUT
+            // File output is unavailable. Report this directly through the
+            // kernel log; dlc_logf here would recursively call log_path().
+            if (sceKernelDebugOutText) {
+                char errorLine[256];
+                (void)std::snprintf(errorLine, sizeof(errorLine),
+                                    "dlc.log open failed path=%s rc=0x%08x\n",
+                                    candidate, static_cast<unsigned>(fd));
+                sceKernelDebugOutText(0, errorLine);
+            }
+#endif
         }
         g_logPath.store(chosen, std::memory_order_release);
         g_logPathState.store(2u, std::memory_order_release);

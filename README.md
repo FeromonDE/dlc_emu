@@ -206,12 +206,91 @@ imports differ in two ways, both harmless:
 `DT_SCE_MODULE_FILENAME` is the plain module name rather than the absolute
 path of whoever built it.
 
+## ShadowMountPlus INI I/O diagnostics (PPSA31246)
+
+This fork first tries `/app0/dlc_emu.ini`. If the file cannot be opened
+or read, it retries the **independent, persistent** path
+`/data/shadowmount/dlc_emu_PPSA31246.ini`. Place a copy of the existing
+INI there via FTP **before** launching the game. No extra folder is required;
+`/data/shadowmount` already exists on ShadowMountPlus setups.
+
+**Do not use `/data/shadowmount/PPSA31246/dlc_emu.ini` for the fallback:**
+the PPSA31246 subdirectory can be mounted from the game image and be read-only.
+The separate INI filename in the parent directory avoids that mount.
+
+The fallback is specific to PPSA31246 and can be changed or disabled by
+overriding `SCE_DLC_EMU_INI_FALLBACK_PATH` at build time (set to `""` to disable).
+The modules do not create directories or configuration files.
+
+The `log/` modules report `dlc.ini.open`, `dlc.ini.read`, and
+`dlc.ini.fallback` messages, with return code and errno for failures.
+The `log/` modules also perform read-only checks on each successful fake
+addcont mount. They open `<mount_point>/re_dlc_000.pak` and
+`<mount_point>/sce_sys/pfs-version.dat` from the **game process** and read
+up to 16 bytes from each. `dlc.mount.probe` logs the open/read status and
+hexadecimal prefix (or raw failure code). The exact paths and first bytes help
+check whether the configured mount points resolve to the intended files. A
+missing `re_dlc_000.pak` does not imply failure if a DLC uses a different file.
+The probe never changes the return value, verifies no PAK content or license,
+and cannot tell whether the **game itself** subsequently opens the file.
+The `log/` AppContent module additionally runs a **best-effort, read-only
+file-event watch** between fake mount and unmount for
+`<mount_point>/re_dlc_000.pak` and
+`<mount_point>/sce_sys/pfs-version.dat`. It uses libkernel equeue
+`sceKernelAddFileEvent` with `NOTE_OPEN | NOTE_READ | NOTE_CLOSE`,
+falling back to `NOTE_OPEN` and then `NOTE_READ` if the broader mask is rejected. The watch
+holds one read-only descriptor per file and is destroyed on unmount;
+there is no injected game hook, polling thread, kernel patch, or change
+to the fake mount return values. The `nolog/` variant does not probe
+or watch files.
+
+New log lines:
+
+- `dlc.mount.stat source=emu ... size=N mode=...` is **the emulator's**
+  `sceKernelStat`, not proof that the game called stat.
+- `dlc.fs.watch ... status=armed notes=0x...` confirms registration;
+  `queue-failed`, `register-failed`, or `unavailable` means observation
+  could not be installed on this firmware/filesystem.
+- `dlc.fs.event ... open=1 read=1 ...` indicates a **coalesced vnode
+  notification** while the DLC was mounted. An open/read indication
+  suggests a subsequent consumer accessed that file; the notification
+  cannot identify the caller, exact syscall, file offset, or return code.
+- `open=0 read=0` is **not evidence of no game access**: some filesystems
+  do not surface file events, reads may use mmap/caches, and file access
+  after unmount is outside the watch window. A `stat` call alone
+  does not generate a vnode read event.
+
+The event watch is diagnostic only. To trace every actual game
+`sceKernelOpen`/`sceKernelStat` call (including failures and paths), a
+separate process-level debugger/tracer is necessary. The replacement
+AppContent PRX alone cannot intercept the game's independent
+`libkernel` imports.
+
+Successful and failed fake entitlement-key queries now emit `dlc.app_key.fake`
+and `dlc.np_key.fake`; failing mount requests emit `dlc.mount.fake status=failed`.
+These messages distinguish a game rejecting an entitlement from one that has
+accepted it but fails to process data elsewhere. Default-generated entitlement
+keys are placeholders, not evidence that a game's DRM requirements are met.
+
+The INI reader uses 4096-byte reads and rejects configs above 32 KiB.
+Successful loading reports the actual source path through
+`dlc.load status=ok path=... entries=...`.
+
+A failed load remains cached until the game process exits. Fully close and
+restart the game after changing the INI. `nolog/` modules use the same
+INI logic but have no diagnostic output.
+
 ## Logging
 
-Logging is disabled by default. Enable `SCE_DLC_EMU_LOG` in
-`src/dlc_modules/dlc_config.h` or through `DlcExtraPreprocessorDefinitions`.
-Logs are written to `/app0/dlc_emu.log`. `SCE_DLC_EMU_LOG_KERNEL_OUT` also
-enables kernel debug output.
+The `log/` build writes the persistent file
+`/data/shadowmount/dlc_emu_PPSA31246.log` only. No fallback is attempted
+to the game's **read-only** `/app0` sandbox or nonexistent `/download0-2`
+directories. The first line of the file identifies the selected location
+(`dlc.log open version=... path=...`). If the log file cannot be opened,
+its failing path and return code are sent to klogsrv when the
+`sceKernelDebugOutText` symbol is available.
+`SCE_DLC_EMU_LOG_KERNEL_OUT` also streams regular log messages to klogsrv.
+Logging remains disabled in the `nolog/` variant.
 
 ## Known Limitations
 
