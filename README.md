@@ -233,7 +233,38 @@ check whether the configured mount points resolve to the intended files. A
 missing `re_dlc_000.pak` does not imply failure if a DLC uses a different file.
 The probe never changes the return value, verifies no PAK content or license,
 and cannot tell whether the **game itself** subsequently opens the file.
-The `nolog/` variant does not probe.
+The `log/` AppContent module additionally runs a **best-effort, read-only
+file-event watch** between fake mount and unmount for
+`<mount_point>/re_dlc_000.pak` and
+`<mount_point>/sce_sys/pfs-version.dat`. It uses libkernel equeue
+`sceKernelAddFileEvent` with `NOTE_OPEN | NOTE_READ | NOTE_CLOSE`,
+falling back to `NOTE_OPEN` if the broader mask is rejected. The watch
+holds one read-only descriptor per file and is destroyed on unmount;
+there is no injected game hook, polling thread, kernel patch, or change
+to the fake mount return values. The `nolog/` variant does not probe
+or watch files.
+
+New log lines:
+
+- `dlc.mount.stat source=emu ... size=N mode=...` is **the emulator's**
+  `sceKernelStat`, not proof that the game called stat.
+- `dlc.fs.watch ... status=armed notes=0x...` confirms registration;
+  `queue-failed`, `register-failed`, or `unavailable` means observation
+  could not be installed on this firmware/filesystem.
+- `dlc.fs.event ... open=1 read=1 ...` indicates a **coalesced vnode
+  notification** while the DLC was mounted. An open/read indication
+  suggests a subsequent consumer accessed that file; the notification
+  cannot identify the caller, exact syscall, file offset, or return code.
+- `open=0 read=0` is **not evidence of no game access**: some filesystems
+  do not surface file events, reads may use mmap/caches, and file access
+  after unmount is outside the watch window. A `stat` call alone
+  does not generate a vnode read event.
+
+The event watch is diagnostic only. To trace every actual game
+`sceKernelOpen`/`sceKernelStat` call (including failures and paths), a
+separate process-level debugger/tracer is necessary. The replacement
+AppContent PRX alone cannot intercept the game's independent
+`libkernel` imports.
 
 Successful and failed fake entitlement-key queries now emit `dlc.app_key.fake`
 and `dlc.np_key.fake`; failing mount requests emit `dlc.mount.fake status=failed`.
