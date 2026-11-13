@@ -13,8 +13,7 @@ name: PS5 Build and Release
 # searched by name, and a consumer that takes the first one caches whatever
 # the API happened to list first.
 
-# Build only when manually requested. Do not use push or pull_request:
-# the PS5 toolchain is expensive and not needed for every code change.
+# Build only on explicit manual workflow dispatch, not on pushes or PRs.
 on:
   workflow_dispatch:
 
