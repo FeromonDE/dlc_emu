@@ -2567,14 +2567,18 @@ void close_vnode_watch(DlcVnodeWatch& watch) {
     }
 }
 
-void arm_vnode_watch(DlcVnodeWatch& watch, const DlcEntry& entry) {
+void arm_vnode_watch(DlcVnodeWatch& watch, const DlcEntry& entry, size_t entryIndex) {
     close_vnode_watch(watch);
 #if defined(NOTE_OPEN) && defined(NOTE_READ) && defined(NOTE_CLOSE)
-    // A short, fixed queue name avoids firmware-specific name limits.
-    const int queueRc = ::sceKernelCreateEqueue(&watch.queue, "dlc_emu_fs");
+    // Distinct short names avoid collisions if multiple DLC stay mounted.
+    char queueName[24]{};
+    (void)std::snprintf(queueName, sizeof(queueName), "dlcfs_%u",
+                        static_cast<unsigned>(entryIndex));
+    const int queueRc = ::sceKernelCreateEqueue(&watch.queue, queueName);
     if (queueRc != SCE_OK || !watch.queue) {
         dlc_logf("dlc.fs.watch label=%s status=queue-failed rc=0x%08x",
                  entry.label.data, static_cast<unsigned>(queueRc));
+        if (watch.queue) (void)::sceKernelDeleteEqueue(watch.queue);
         watch.queue = nullptr;
         return;
     }
@@ -2707,7 +2711,7 @@ int32_t dlcEmu_sceAppContentAddcontMount(SceNpServiceLabel serviceLabel,
         log_mount_file_probe(*entry);
 #endif
 #if SCE_DLC_EMU_LOG && defined(LIBSCEAPPCONTENT_IMPL)
-        arm_vnode_watch(st.fileWatches[index], *entry);
+        arm_vnode_watch(st.fileWatches[index], *entry, index);
 #endif
     } else {
         dlc_logf("dlc.mount.fake status=failed label=%s service=%u rc=0x%08x",
@@ -2736,7 +2740,7 @@ int32_t dlcEmu_sceAppContentAddcontMountByEntitlemetId(const char* entitlementId
         log_mount_file_probe(*entry);
 #endif
 #if SCE_DLC_EMU_LOG && defined(LIBSCEAPPCONTENT_IMPL)
-        arm_vnode_watch(st.fileWatches[index], *entry);
+        arm_vnode_watch(st.fileWatches[index], *entry, index);
 #endif
     } else {
         dlc_logf("dlc.mount.fake status=failed entitlementId=%s rc=0x%08x",
