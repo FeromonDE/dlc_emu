@@ -13,6 +13,12 @@
 #include <_fs.h>
 #include <_kernel.h>
 
+// File-event observation is confined to the logging AppContent module.
+// It never replaces game imports or patches game code.
+#if SCE_DLC_EMU_LOG && defined(LIBSCEAPPCONTENT_IMPL)
+#include <kernel/equeue.h>
+#endif
+
 #include <atomic>
 #include <cctype>
 #include <cerrno>
@@ -121,6 +127,19 @@ struct DlcEntry {
     bool npServiceLabelSet{false};
 };
 
+#if SCE_DLC_EMU_LOG && defined(LIBSCEAPPCONTENT_IMPL)
+constexpr size_t kWatchFileCount = 2;
+static constexpr const char* kWatchRelativePaths[kWatchFileCount] = {
+    "re_dlc_000.pak",
+    "sce_sys/pfs-version.dat",
+};
+struct DlcVnodeWatch {
+    SceKernelEqueue queue{nullptr};
+    int fds[kWatchFileCount]{-1, -1};
+    uint32_t masks[kWatchFileCount]{};
+};
+#endif
+
 struct ParsedDlcEntry {
     char contentId[128]{};
     char label[128]{};
@@ -219,6 +238,9 @@ struct DlcState {
     size_t mountedCount{0};
     DlcEntry entries[kMaxDlcEntries]{};
     bool mounted[kMaxDlcEntries]{};
+#if SCE_DLC_EMU_LOG && defined(LIBSCEAPPCONTENT_IMPL)
+    DlcVnodeWatch fileWatches[kMaxDlcEntries]{};
+#endif
     ConsumedTransaction consumed[kMaxConsumeTransactions]{};
     size_t consumedNext{0};
     EntryPendingRequest entryRequests[kMaxEntryRequests]{};
@@ -2482,6 +2504,19 @@ void log_mount_file_probe(const DlcEntry& entry) {
                      entry.label.data, relative);
             continue;
         }
+        // This stat is made by the emulator, not by the game. It is useful
+        // for spotting an incorrect mount root or truncated DLC file.
+        SceKernelStat metadata{};
+        const int statRc = ::sceKernelStat(path, &metadata);
+        if (statRc == SCE_OK) {
+            dlc_logf("dlc.mount.stat source=emu label=%s path=%s size=%lld mode=0%o",
+                     entry.label.data, path, static_cast<long long>(metadata.st_size),
+                     static_cast<unsigned>(metadata.st_mode));
+        } else {
+            const int statErrno = errno;
+            dlc_logf("dlc.mount.stat source=emu label=%s path=%s status=failed rc=0x%08x errno=%d",
+                     entry.label.data, path, static_cast<unsigned>(statRc), statErrno);
+        }
         const int fd = ::sceKernelOpen(path, SCE_KERNEL_O_RDONLY, 0);
         if (fd < 0) {
             const int savedErrno = errno;
@@ -2511,6 +2546,146 @@ void log_mount_file_probe(const DlcEntry& entry) {
 }
 #endif
 
+
+// Observe file-open/read/close *vnode events* between fake mount and unmount.
+// Unlike the mount probe, these events can be raised by subsequent game I/O.
+// This is NOT an interception of sceKernelOpen/sceKernelStat: events are
+// coalesced, have no caller/path arguments, and support varies by filesystem.
+// No background thread, process patch, or writes to DLC files are involved.
+#if SCE_DLC_EMU_LOG && defined(LIBSCEAPPCONTENT_IMPL)
+void close_vnode_watch(DlcVnodeWatch& watch) {
+    for (size_t i = 0; i < kWatchFileCount; ++i) {
+        if (watch.fds[i] >= 0) {
+            (void)::sceKernelClose(watch.fds[i]);
+            watch.fds[i] = -1;
+        }
+        watch.masks[i] = 0;
+    }
+    if (watch.queue) {
+        (void)::sceKernelDeleteEqueue(watch.queue);
+        watch.queue = nullptr;
+    }
+}
+
+void arm_vnode_watch(DlcVnodeWatch& watch, const DlcEntry& entry) {
+    close_vnode_watch(watch);
+#if defined(NOTE_OPEN) && defined(NOTE_READ) && defined(NOTE_CLOSE)
+    // A short, fixed queue name avoids firmware-specific name limits.
+    const int queueRc = ::sceKernelCreateEqueue(&watch.queue, "dlc_emu_fs");
+    if (queueRc != SCE_OK || !watch.queue) {
+        dlc_logf("dlc.fs.watch label=%s status=queue-failed rc=0x%08x",
+                 entry.label.data, static_cast<unsigned>(queueRc));
+        watch.queue = nullptr;
+        return;
+    }
+    unsigned armed = 0;
+    for (size_t i = 0; i < kWatchFileCount; ++i) {
+        char path[128]{};
+        const int size = std::snprintf(path, sizeof(path), "%s/%s",
+                                       entry.mount.data, kWatchRelativePaths[i]);
+        if (size <= 0 || static_cast<size_t>(size) >= sizeof(path)) {
+            dlc_logf("dlc.fs.watch label=%s file=%s status=path-too-long",
+                     entry.label.data, kWatchRelativePaths[i]);
+            continue;
+        }
+        // Opening the watcher fd comes before registering the note and is
+        // therefore not counted as a game-originated NOTE_OPEN.
+        const int fd = ::sceKernelOpen(path, SCE_KERNEL_O_RDONLY, 0);
+        if (fd < 0) {
+            dlc_logf("dlc.fs.watch label=%s path=%s status=open-failed rc=0x%08x",
+                     entry.label.data, path, static_cast<unsigned>(fd));
+            continue;
+        }
+        watch.fds[i] = fd;
+        const uint32_t allNotes = NOTE_OPEN | NOTE_READ | NOTE_CLOSE;
+        uint32_t requested = allNotes;
+        int rc = ::sceKernelAddFileEvent(watch.queue, fd,
+                                         static_cast<int>(requested), &watch.fds[i]);
+        if (rc != SCE_OK) {
+            // Some firmware/filesystems may accept only a subset of notes.
+            requested = NOTE_OPEN;
+            rc = ::sceKernelAddFileEvent(watch.queue, fd,
+                                         static_cast<int>(requested), &watch.fds[i]);
+        }
+        if (rc != SCE_OK) {
+            dlc_logf("dlc.fs.watch label=%s path=%s status=register-failed rc=0x%08x",
+                     entry.label.data, path, static_cast<unsigned>(rc));
+            (void)::sceKernelClose(watch.fds[i]);
+            watch.fds[i] = -1;
+            continue;
+        }
+        watch.masks[i] = requested;
+        ++armed;
+        dlc_logf("dlc.fs.watch label=%s path=%s status=armed notes=0x%08x",
+                 entry.label.data, path, static_cast<unsigned>(requested));
+    }
+    if (!armed) {
+        close_vnode_watch(watch);
+        dlc_logf("dlc.fs.watch label=%s status=unavailable", entry.label.data);
+    }
+#else
+    dlc_logf("dlc.fs.watch label=%s status=unsupported-headers", entry.label.data);
+#endif
+}
+
+void harvest_vnode_watch(DlcVnodeWatch& watch, const DlcEntry& entry) {
+#if defined(NOTE_OPEN) && defined(NOTE_READ) && defined(NOTE_CLOSE)
+    if (!watch.queue) return;
+    uint32_t seen[kWatchFileCount]{};
+    unsigned eventCount = 0;
+    for (unsigned batch = 0; batch < 4; ++batch) {
+        SceKernelEvent events[8]{};
+        int count = 0;
+        SceKernelUseconds timeout = 0; // Nonblocking; never delay the game.
+        const int rc = ::sceKernelWaitEqueue(watch.queue, events, 8,
+                                              &count, &timeout);
+        if (rc != SCE_OK) {
+            if (batch == 0) {
+                dlc_logf("dlc.fs.watch label=%s status=wait-rc rc=0x%08x",
+                         entry.label.data, static_cast<unsigned>(rc));
+            }
+            break;
+        }
+        if (count <= 0) break;
+        if (count > 8) count = 8;
+        eventCount += static_cast<unsigned>(count);
+        for (int j = 0; j < count; ++j) {
+            bool matched = false;
+            for (size_t i = 0; i < kWatchFileCount; ++i) {
+                if (watch.masks[i] && (events[j].udata == &watch.fds[i] ||
+                    events[j].ident == static_cast<uintptr_t>(watch.fds[i]))) {
+                    seen[i] |= static_cast<uint32_t>(events[j].fflags);
+                    matched = true;
+                    break;
+                }
+            }
+            if (!matched) {
+                dlc_logf("dlc.fs.watch label=%s status=unmatched-event ident=%llu flags=0x%08x",
+                         entry.label.data, static_cast<unsigned long long>(events[j].ident),
+                         static_cast<unsigned>(events[j].fflags));
+            }
+        }
+    }
+    for (size_t i = 0; i < kWatchFileCount; ++i) {
+        if (!watch.masks[i]) continue;
+        const uint32_t notes = seen[i];
+        dlc_logf("dlc.fs.event label=%s file=%s open=%u read=%u close=%u flags=0x%08x events=%u",
+                 entry.label.data, kWatchRelativePaths[i],
+                 (notes & NOTE_OPEN) ? 1u : 0u,
+                 (notes & NOTE_READ) ? 1u : 0u,
+                 (notes & NOTE_CLOSE) ? 1u : 0u,
+                 static_cast<unsigned>(notes), eventCount);
+    }
+    // No event does NOT establish that the game did not read the PAK:
+    // mmap, caching, and a filesystem without vnode notifications can all
+    // evade observation. sceKernelStat itself generates no read event.
+#else
+    (void)entry;
+#endif
+    close_vnode_watch(watch);
+}
+#endif
+
 // Fake DLC mount state mirrors the SDK-visible addcont state even though the
 // returned path is a pre-existing /app0 folder.
 int32_t dlcEmu_sceAppContentAddcontMount(SceNpServiceLabel serviceLabel,
@@ -2530,6 +2705,9 @@ int32_t dlcEmu_sceAppContentAddcontMount(SceNpServiceLabel serviceLabel,
                  static_cast<unsigned>(st.mountedCount));
 #if SCE_DLC_EMU_LOG
         log_mount_file_probe(*entry);
+#endif
+#if SCE_DLC_EMU_LOG && defined(LIBSCEAPPCONTENT_IMPL)
+        arm_vnode_watch(st.fileWatches[index], *entry);
 #endif
     } else {
         dlc_logf("dlc.mount.fake status=failed label=%s service=%u rc=0x%08x",
@@ -2557,6 +2735,9 @@ int32_t dlcEmu_sceAppContentAddcontMountByEntitlemetId(const char* entitlementId
 #if SCE_DLC_EMU_LOG
         log_mount_file_probe(*entry);
 #endif
+#if SCE_DLC_EMU_LOG && defined(LIBSCEAPPCONTENT_IMPL)
+        arm_vnode_watch(st.fileWatches[index], *entry);
+#endif
     } else {
         dlc_logf("dlc.mount.fake status=failed entitlementId=%s rc=0x%08x",
                  entitlementId, static_cast<unsigned>(rc));
@@ -2575,6 +2756,9 @@ int32_t dlcEmu_sceAppContentAddcontUnmount(const SceAppContentMountPoint* mountP
     if (index >= st.count || !st.mounted[index]) {
         return SCE_APP_CONTENT_ERROR_NOT_MOUNTED;
     }
+#if SCE_DLC_EMU_LOG && defined(LIBSCEAPPCONTENT_IMPL)
+    harvest_vnode_watch(st.fileWatches[index], *entry);
+#endif
     st.mounted[index] = false;
     if (st.mountedCount != 0) --st.mountedCount;
     dlc_logf("dlc.unmount.fake mount=%s active=%u",
