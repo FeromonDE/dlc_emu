@@ -1365,45 +1365,61 @@ private:
     }
 };
 
+// Use bounded reads: some mounted image backends reject a large single read
+// even when the same file is accessible by small reads.
 bool load_file(const char* path, char* out, size_t outSize, size_t* outLen, bool* tooLarge) {
-    if (!out || outSize == 0) return false;
+    if (!out || outSize < 2u) return false;
     out[0] = '\0';
+    if (outLen) *outLen = 0;
     if (tooLarge) *tooLarge = false;
-    int fd = ::sceKernelOpen(path, SCE_KERNEL_O_RDONLY, 0);
+
+    const int fd = ::sceKernelOpen(path, SCE_KERNEL_O_RDONLY, 0);
     if (fd < 0) {
+        const int savedErrno = errno;
+        dlc_logf("dlc.ini.open status=failed path=%s rc=0x%08x errno=%d",
+                 path, static_cast<unsigned>(fd), savedErrno);
         return false;
     }
+    dlc_logf("dlc.ini.open status=ok path=%s", path);
+
+    constexpr size_t kReadChunkBytes = 4096u;
     size_t total = 0;
-    while (total + 1u < outSize) {
-        const ssize_t rc = ::sceKernelRead(fd, out + total, outSize - total - 1u);
+    for (;;) {
+        // One extra byte detects an oversized config without accepting truncation.
+        const size_t remaining = outSize - 1u - total;
+        char overflowByte = '\0';
+        void* destination = remaining ? static_cast<void*>(out + total)
+                                      : static_cast<void*>(&overflowByte);
+        const size_t bytesToRead = remaining
+                                      ? (remaining < kReadChunkBytes ? remaining : kReadChunkBytes)
+                                      : 1u;
+        const ssize_t rc = ::sceKernelRead(fd, destination, bytesToRead);
         if (rc < 0) {
+            const int savedErrno = errno;
+            dlc_logf("dlc.ini.read status=failed path=%s offset=%u requested=%u rc=0x%08x errno=%d",
+                     path, static_cast<unsigned>(total),
+                     static_cast<unsigned>(bytesToRead), static_cast<unsigned>(rc), savedErrno);
             (void)::sceKernelClose(fd);
             out[0] = '\0';
             return false;
         }
-        if (rc == 0) {
-            break;
+        if (rc == 0) break;
+        if (remaining == 0u) {
+            if (tooLarge) *tooLarge = true;
+            dlc_logf("dlc.ini.read status=too-large path=%s maxBytes=%u",
+                     path, static_cast<unsigned>(outSize - 1u));
+            (void)::sceKernelClose(fd);
+            out[0] = '\0';
+            return false;
         }
         total += static_cast<size_t>(rc);
     }
-    if (total + 1u >= outSize) {
-        char extra = '\0';
-        const ssize_t rc = ::sceKernelRead(fd, &extra, sizeof(extra));
-        if (rc < 0) {
-            (void)::sceKernelClose(fd);
-            out[0] = '\0';
-            return false;
-        }
-        if (rc > 0) {
-            (void)::sceKernelClose(fd);
-            out[0] = '\0';
-            if (tooLarge) *tooLarge = true;
-            return false;
-        }
-    }
+
     (void)::sceKernelClose(fd);
     out[total] = '\0';
     if (outLen) *outLen = total;
+    dlc_logf("dlc.ini.read status=ok path=%s bytes=%u",
+             path, static_cast<unsigned>(total));
     return true;
 }
 
@@ -1417,19 +1433,30 @@ DlcState& ensure_loaded() {
     st.count = 0;
     dlc_logf("dlc.version value=%s", SCE_DLC_EMU_VERSION);
 
+
     static char ini[kIniBufferBytes]{};
     size_t len = 0;
     bool tooLarge = false;
-    if (!load_file(SCE_DLC_EMU_INI_PATH, ini, sizeof(ini), &len, &tooLarge)) {
+    const char* sourcePath = SCE_DLC_EMU_INI_PATH;
+    bool loaded = load_file(sourcePath, ini, sizeof(ini), &len, &tooLarge);
+    if (!loaded && !tooLarge &&
+        SCE_DLC_EMU_INI_FALLBACK_PATH[0] != '\0' &&
+        std::strcmp(SCE_DLC_EMU_INI_PATH, SCE_DLC_EMU_INI_FALLBACK_PATH) != 0) {
+        dlc_logf("dlc.ini.fallback status=trying path=%s", SCE_DLC_EMU_INI_FALLBACK_PATH);
+        sourcePath = SCE_DLC_EMU_INI_FALLBACK_PATH;
+        loaded = load_file(sourcePath, ini, sizeof(ini), &len, &tooLarge);
+    }
+    if (!loaded) {
         if (tooLarge) {
             dlc_logf("dlc.load status=parse-failed reason=file-too-large path=%s maxBytes=%u",
-                              SCE_DLC_EMU_INI_PATH,
-                              static_cast<unsigned>(kMaxIniFileBytes));
-            return st;
+                     sourcePath, static_cast<unsigned>(kMaxIniFileBytes));
+        } else {
+            dlc_logf("dlc.load status=unreadable primary=%s fallback=%s",
+                     SCE_DLC_EMU_INI_PATH, SCE_DLC_EMU_INI_FALLBACK_PATH);
         }
-        dlc_logf("dlc.load status=missing path=%s", SCE_DLC_EMU_INI_PATH);
         return st;
     }
+
     if (!DlcIniParser::parse(ini, len, st)) {
         st.count = 0;
         dlc_logf("dlc.load status=parse-failed path=%s bytes=%u",
