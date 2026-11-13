@@ -19,17 +19,19 @@
 #endif
 
 #ifndef SCE_DLC_EMU_LOG_PATH
-#define SCE_DLC_EMU_LOG_PATH "/app0/dlc_emu.log"
+#define SCE_DLC_EMU_LOG_PATH "/data/shadowmount/dlc_emu_PPSA31246.log"
 #endif
 
 #ifndef SCE_DLC_EMU_INI_PATH
 #define SCE_DLC_EMU_INI_PATH "/app0/dlc_emu.ini"
 #endif
 
-// Per-title writable fallback for PPSA31246 on ShadowMountPlus. Override the
-// macro at build time for other games, or set it to "" to disable the fallback.
+// Per-title persistent fallback for PPSA31246 on ShadowMountPlus.
+// The /data/shadowmount/PPSA31246 directory is provided by the image mount
+// and is not an independent writable configuration directory.
+// Override the macro at build time for other games, or set it to "" to disable.
 #ifndef SCE_DLC_EMU_INI_FALLBACK_PATH
-#define SCE_DLC_EMU_INI_FALLBACK_PATH "/data/shadowmount/PPSA31246/dlc_emu.ini"
+#define SCE_DLC_EMU_INI_FALLBACK_PATH "/data/shadowmount/dlc_emu_PPSA31246.ini"
 #endif
 
 /* The title's own parameter file, which is where userDefinedParam1..4 live. */
