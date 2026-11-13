@@ -2460,6 +2460,34 @@ int32_t dlcEmu_sceAppContentGetEntitlementKey(SceNpServiceLabel serviceLabel,
     return SCE_APP_CONTENT_ERROR_DRM_NO_ENTITLEMENT;
 }
 
+// Diagnostic-only probe: an API-level fake mount does not check whether the
+// game's sandbox can actually open the data file at the returned path. In
+// particular, an FTP-visible file need not be accessible in the game process.
+// This test intentionally does not change mount success/failure semantics.
+#if SCE_DLC_EMU_LOG
+void log_mount_file_probe(const DlcEntry& entry) {
+    char path[128]{};
+    const int n = std::snprintf(path, sizeof(path), "%s/re_dlc_000.pak", entry.mount.data);
+    if (n < 0 || static_cast<size_t>(n) >= sizeof(path)) {
+        dlc_logf("dlc.mount.probe label=%s status=path-too-long", entry.label.data);
+        return;
+    }
+    const int fd = ::sceKernelOpen(path, SCE_KERNEL_O_RDONLY, 0);
+    if (fd < 0) {
+        const int savedErrno = errno;
+        dlc_logf("dlc.mount.probe label=%s path=%s open=failed rc=0x%08x errno=%d",
+                 entry.label.data, path, static_cast<unsigned>(fd), savedErrno);
+        return;
+    }
+    uint8_t header[8]{};
+    const ssize_t readResult = ::sceKernelRead(fd, header, sizeof(header));
+    const int savedErrno = readResult < 0 ? errno : 0;
+    (void)::sceKernelClose(fd);
+    dlc_logf("dlc.mount.probe label=%s path=%s open=ok read=%lld errno=%d",
+             entry.label.data, path, static_cast<long long>(readResult), savedErrno);
+}
+#endif
+
 // Fake DLC mount state mirrors the SDK-visible addcont state even though the
 // returned path is a pre-existing /app0 folder.
 int32_t dlcEmu_sceAppContentAddcontMount(SceNpServiceLabel serviceLabel,
@@ -2477,6 +2505,9 @@ int32_t dlcEmu_sceAppContentAddcontMount(SceNpServiceLabel serviceLabel,
                  entry->label.data,
                  entry->mount.data,
                  static_cast<unsigned>(st.mountedCount));
+#if SCE_DLC_EMU_LOG
+        log_mount_file_probe(*entry);
+#endif
     }
     return rc;
 }
@@ -2496,6 +2527,9 @@ int32_t dlcEmu_sceAppContentAddcontMountByEntitlemetId(const char* entitlementId
                  entitlementId,
                  entry->mount.data,
                  static_cast<unsigned>(st.mountedCount));
+#if SCE_DLC_EMU_LOG
+        log_mount_file_probe(*entry);
+#endif
     }
     return rc;
 }
