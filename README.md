@@ -234,13 +234,14 @@ INI logic but have no diagnostic output.
 
 ## Logging
 
-The `log/` build now writes the persistent file
-`/data/shadowmount/dlc_emu_PPSA31246.log` first, falling back to
-`/app0/dlc_emu.log` only if the first path cannot be opened for append.
-It does **not** rely on `/download0`, `/download1`, or `/download2`,
-which are not guaranteed to exist. The selected path appears in the first
-file line (`dlc.log open version=... path=...`).
-`SCE_DLC_EMU_LOG_KERNEL_OUT` also enables kernel debug output for klogsrv.
+The `log/` build writes the persistent file
+`/data/shadowmount/dlc_emu_PPSA31246.log` only. No fallback is attempted
+to the game's **read-only** `/app0` sandbox or nonexistent `/download0-2`
+directories. The first line of the file identifies the selected location
+(`dlc.log open version=... path=...`). If the log file cannot be opened,
+its failing path and return code are sent to klogsrv when the
+`sceKernelDebugOutText` symbol is available.
+`SCE_DLC_EMU_LOG_KERNEL_OUT` also streams regular log messages to klogsrv.
 Logging remains disabled in the `nolog/` variant.
 
 ## Known Limitations
