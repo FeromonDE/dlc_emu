@@ -238,7 +238,7 @@ file-event watch** between fake mount and unmount for
 `<mount_point>/re_dlc_000.pak` and
 `<mount_point>/sce_sys/pfs-version.dat`. It uses libkernel equeue
 `sceKernelAddFileEvent` with `NOTE_OPEN | NOTE_READ | NOTE_CLOSE`,
-falling back to `NOTE_OPEN` if the broader mask is rejected. The watch
+falling back to `NOTE_OPEN` and then `NOTE_READ` if the broader mask is rejected. The watch
 holds one read-only descriptor per file and is destroyed on unmount;
 there is no injected game hook, polling thread, kernel patch, or change
 to the fake mount return values. The `nolog/` variant does not probe
