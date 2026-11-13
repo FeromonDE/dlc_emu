@@ -206,6 +206,24 @@ imports differ in two ways, both harmless:
 `DT_SCE_MODULE_FILENAME` is the plain module name rather than the absolute
 path of whoever built it.
 
+## ShadowMountPlus INI I/O diagnostics (PPSA31246)
+
+This fork first tries `/app0/dlc_emu.ini` and, **only if that file cannot be
+opened or read**, retries `/data/shadowmount/PPSA31246/dlc_emu.ini`.
+The fallback is specific to PPSA31246 and can be changed or disabled with
+`SCE_DLC_EMU_INI_FALLBACK_PATH` at build time. Copy the existing INI to this
+writable path via FTP if the `/app0` read fails; the folder must already exist.
+The modules do not create any directories or config files.
+
+The `log/` modules report `dlc.ini.open`, `dlc.ini.read`, and
+`dlc.ini.fallback` messages, with return code and errno for failures.
+The INI reader uses 4096-byte reads instead of a single large request, and
+still rejects configs larger than 32 KiB. A successful load reports the
+**actual** path via `dlc.load status=ok path=... entries=...`.
+A failed attempt is cached until the game process exits, so fully close and
+relaunch the game after changing the INI. `nolog/` binaries contain the same
+reading and fallback behavior without diagnostic output.
+
 ## Logging
 
 Logging is disabled by default. Enable `SCE_DLC_EMU_LOG` in
