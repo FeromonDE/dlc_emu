@@ -1433,7 +1433,6 @@ DlcState& ensure_loaded() {
     st.count = 0;
     dlc_logf("dlc.version value=%s", SCE_DLC_EMU_VERSION);
 
-
     static char ini[kIniBufferBytes]{};
     size_t len = 0;
     bool tooLarge = false;
@@ -1460,12 +1459,12 @@ DlcState& ensure_loaded() {
     if (!DlcIniParser::parse(ini, len, st)) {
         st.count = 0;
         dlc_logf("dlc.load status=parse-failed path=%s bytes=%u",
-                                  SCE_DLC_EMU_INI_PATH,
+                 sourcePath,
                                   static_cast<unsigned>(len));
         return st;
     }
     dlc_logf("dlc.load status=ok path=%s entries=%u",
-                              SCE_DLC_EMU_INI_PATH,
+             sourcePath,
                               static_cast<unsigned>(st.count));
     return st;
 }
