@@ -13,13 +13,8 @@ name: PS5 Build and Release
 # searched by name, and a consumer that takes the first one caches whatever
 # the API happened to list first.
 
+# Build only on explicit manual workflow dispatch, not on pushes or PRs.
 on:
-  push:
-    paths-ignore:
-      - "**/*.md"
-  pull_request:
-    paths-ignore:
-      - "**/*.md"
   workflow_dispatch:
 
 concurrency:
