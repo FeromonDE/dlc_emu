@@ -67,11 +67,22 @@ jobs:
             python3 \
             zip
 
+      # Ubuntu's pacman-package-manager config requires signed packages.
+      # pacbrew produces unsigned local packages; extract only their SDK
+      # payload into /opt rather than relying on Arch's pacman database.
       - name: Build PS5 payload SDK
         working-directory: pacbrew-repo/sdk
+        shell: bash
         run: |
-          makepkg -c -f
-          sudo pacman --noconfirm -U ./ps5-payload-*.pkg.tar.gz
+          set -euo pipefail
+          makepkg --nodeps -c -f
+          staging="$(mktemp -d)"
+          bsdtar -xf ./ps5-payload-sdk-*.pkg.tar.* -C "$staging"
+          test -d "$staging/opt/ps5-payload-sdk"
+          sudo mkdir -p /opt/ps5-payload-sdk
+          sudo cp -a "$staging/opt/ps5-payload-sdk/." /opt/ps5-payload-sdk/
+          rm -rf "$staging"
+          test -f /opt/ps5-payload-sdk/toolchain/prospero.mk
 
       # NEEDED: the modules are C++17 and include <atomic>, <cstdint>,
       # <cstdio>. The SCE headers they also use are vendored in
@@ -79,9 +90,18 @@ jobs:
       # on the official SDK.
       - name: Build PS5 libc++ headers
         working-directory: pacbrew-repo/libcxx
+        shell: bash
         run: |
-          makepkg -c -f
-          sudo pacman --noconfirm -U ./ps5-payload-*.pkg.tar.gz
+          set -euo pipefail
+          # Dependency was installed by extraction above (not registered
+          # in pacman's database), so skip makepkg's dependency resolution.
+          makepkg --nodeps -c -f
+          staging="$(mktemp -d)"
+          bsdtar -xf ./ps5-payload-libcxx-*.pkg.tar.* -C "$staging"
+          test -d "$staging/opt/ps5-payload-sdk/target"
+          sudo cp -a "$staging/opt/ps5-payload-sdk/." /opt/ps5-payload-sdk/
+          rm -rf "$staging"
+          test -d /opt/ps5-payload-sdk/target/include/c++/v1
 
       # build.sh runs `make verify` per variant, so a module that links but
       # does not carry the exports and imports it is supposed to fails here
