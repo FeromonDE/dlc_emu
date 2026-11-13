@@ -2455,36 +2455,59 @@ int32_t dlcEmu_sceAppContentGetEntitlementKey(SceNpServiceLabel serviceLabel,
     if (copy_entry_by_label(entitlementLabel, &entry) &&
         entry_is_addcont(entry, serviceLabel)) {
         std::memcpy(key->data, entry.key, sizeof(entry.key));
+        dlc_logf("dlc.app_key.fake label=%s status=ok", entry.label.data);
         return SCE_OK;
     }
+    dlc_logf("dlc.app_key.fake label=%s status=no-entitlement",
+             entitlementLabel->data);
     return SCE_APP_CONTENT_ERROR_DRM_NO_ENTITLEMENT;
 }
 
-// Diagnostic-only probe: an API-level fake mount does not check whether the
-// game's sandbox can actually open the data file at the returned path. In
-// particular, an FTP-visible file need not be accessible in the game process.
-// This test intentionally does not change mount success/failure semantics.
+// Diagnostic only: a fake mount returning a directory does not prove the
+// contents are usable by the game. Check both known DLC files from this process
+// without interpreting their formats or changing AppContent's mount result.
+// The short hexadecimal prefix helps distinguish missing, empty and unexpected
+// data without dumping entire assets into the log.
 #if SCE_DLC_EMU_LOG
 void log_mount_file_probe(const DlcEntry& entry) {
-    char path[128]{};
-    const int n = std::snprintf(path, sizeof(path), "%s/re_dlc_000.pak", entry.mount.data);
-    if (n < 0 || static_cast<size_t>(n) >= sizeof(path)) {
-        dlc_logf("dlc.mount.probe label=%s status=path-too-long", entry.label.data);
-        return;
+    static constexpr const char* kRelativePaths[] = {
+        "re_dlc_000.pak",
+        "sce_sys/pfs-version.dat",
+    };
+    for (const char* relative : kRelativePaths) {
+        char path[128]{};
+        const int n = std::snprintf(path, sizeof(path), "%s/%s", entry.mount.data, relative);
+        if (n < 0 || static_cast<size_t>(n) >= sizeof(path)) {
+            dlc_logf("dlc.mount.probe label=%s file=%s status=path-too-long",
+                     entry.label.data, relative);
+            continue;
+        }
+        const int fd = ::sceKernelOpen(path, SCE_KERNEL_O_RDONLY, 0);
+        if (fd < 0) {
+            const int savedErrno = errno;
+            dlc_logf("dlc.mount.probe label=%s path=%s open=failed rc=0x%08x errno=%d",
+                     entry.label.data, path, static_cast<unsigned>(fd), savedErrno);
+            continue;
+        }
+        uint8_t prefix[16]{};
+        const ssize_t readResult = ::sceKernelRead(fd, prefix, sizeof(prefix));
+        const int savedErrno = readResult < 0 ? errno : 0;
+        (void)::sceKernelClose(fd);
+        if (readResult < 0) {
+            dlc_logf("dlc.mount.probe label=%s path=%s open=ok read=failed rc=0x%08x errno=%d",
+                     entry.label.data, path, static_cast<unsigned>(readResult), savedErrno);
+            continue;
+        }
+        char hex[(sizeof(prefix) * 2u) + 1u]{};
+        static constexpr char kHexDigits[] = "0123456789abcdef";
+        for (size_t i = 0; i < static_cast<size_t>(readResult); ++i) {
+            hex[2u * i] = kHexDigits[prefix[i] >> 4u];
+            hex[2u * i + 1u] = kHexDigits[prefix[i] & 0x0fu];
+        }
+        dlc_logf("dlc.mount.probe label=%s path=%s open=ok read=%lld prefix=%s",
+                 entry.label.data, path,
+                 static_cast<long long>(readResult), hex);
     }
-    const int fd = ::sceKernelOpen(path, SCE_KERNEL_O_RDONLY, 0);
-    if (fd < 0) {
-        const int savedErrno = errno;
-        dlc_logf("dlc.mount.probe label=%s path=%s open=failed rc=0x%08x errno=%d",
-                 entry.label.data, path, static_cast<unsigned>(fd), savedErrno);
-        return;
-    }
-    uint8_t header[8]{};
-    const ssize_t readResult = ::sceKernelRead(fd, header, sizeof(header));
-    const int savedErrno = readResult < 0 ? errno : 0;
-    (void)::sceKernelClose(fd);
-    dlc_logf("dlc.mount.probe label=%s path=%s open=ok read=%lld errno=%d",
-             entry.label.data, path, static_cast<long long>(readResult), savedErrno);
 }
 #endif
 
@@ -2508,6 +2531,10 @@ int32_t dlcEmu_sceAppContentAddcontMount(SceNpServiceLabel serviceLabel,
 #if SCE_DLC_EMU_LOG
         log_mount_file_probe(*entry);
 #endif
+    } else {
+        dlc_logf("dlc.mount.fake status=failed label=%s service=%u rc=0x%08x",
+                 entitlementLabel->data, static_cast<unsigned>(serviceLabel),
+                 static_cast<unsigned>(rc));
     }
     return rc;
 }
@@ -2530,6 +2557,9 @@ int32_t dlcEmu_sceAppContentAddcontMountByEntitlemetId(const char* entitlementId
 #if SCE_DLC_EMU_LOG
         log_mount_file_probe(*entry);
 #endif
+    } else {
+        dlc_logf("dlc.mount.fake status=failed entitlementId=%s rc=0x%08x",
+                 entitlementId, static_cast<unsigned>(rc));
     }
     return rc;
 }
@@ -2950,8 +2980,11 @@ int32_t dlcEmu_sceNpEntitlementAccessGetEntitlementKey(
     if (copy_entry_by_label(entitlementLabel, &entry) &&
         entry_is_addcont(entry, serviceLabel)) {
         std::memcpy(key->data, entry.key, sizeof(entry.key));
+        dlc_logf("dlc.np_key.fake label=%s status=ok", entry.label.data);
         return SCE_OK;
     }
+    dlc_logf("dlc.np_key.fake label=%s status=no-entitlement",
+             entitlementLabel->data);
     return SCE_NP_ENTITLEMENT_ACCESS_ERROR_NO_ENTITLEMENT;
 }
 
