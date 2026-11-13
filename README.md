@@ -224,6 +224,14 @@ The modules do not create directories or configuration files.
 
 The `log/` modules report `dlc.ini.open`, `dlc.ini.read`, and
 `dlc.ini.fallback` messages, with return code and errno for failures.
+The `log/` modules also perform a read-only diagnostic on each successful
+fake addcont mount: they try to open `<mount_point>/re_dlc_000.pak` from the
+**game process** and read its first eight bytes. Check `dlc.mount.probe`
+lines for the raw open return code and errno, or `open=ok read=8`.
+This is **only a probe for the known PAK filename**; it does not prove that
+other DLC contents are absent when that filename is missing, and it never
+changes the mount's return value. The `nolog/` variant does not probe.
+
 The INI reader uses 4096-byte reads and rejects configs above 32 KiB.
 Successful loading reports the actual source path through
 `dlc.load status=ok path=... entries=...`.
