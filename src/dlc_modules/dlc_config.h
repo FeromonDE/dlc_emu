@@ -7,7 +7,7 @@
 #pragma once
 
 #ifndef SCE_DLC_EMU_VERSION
-#define SCE_DLC_EMU_VERSION "0.4"
+#define SCE_DLC_EMU_VERSION "0.4.1-ini-io"
 #endif
 
 #ifndef SCE_DLC_EMU_LOG
@@ -24,6 +24,12 @@
 
 #ifndef SCE_DLC_EMU_INI_PATH
 #define SCE_DLC_EMU_INI_PATH "/app0/dlc_emu.ini"
+#endif
+
+// Per-title writable fallback for PPSA31246 on ShadowMountPlus. Override the
+// macro at build time for other games, or set it to "" to disable the fallback.
+#ifndef SCE_DLC_EMU_INI_FALLBACK_PATH
+#define SCE_DLC_EMU_INI_FALLBACK_PATH "/data/shadowmount/PPSA31246/dlc_emu.ini"
 #endif
 
 /* The title's own parameter file, which is where userDefinedParam1..4 live. */
