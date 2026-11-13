@@ -224,13 +224,22 @@ The modules do not create directories or configuration files.
 
 The `log/` modules report `dlc.ini.open`, `dlc.ini.read`, and
 `dlc.ini.fallback` messages, with return code and errno for failures.
-The `log/` modules also perform a read-only diagnostic on each successful
-fake addcont mount: they try to open `<mount_point>/re_dlc_000.pak` from the
-**game process** and read its first eight bytes. Check `dlc.mount.probe`
-lines for the raw open return code and errno, or `open=ok read=8`.
-This is **only a probe for the known PAK filename**; it does not prove that
-other DLC contents are absent when that filename is missing, and it never
-changes the mount's return value. The `nolog/` variant does not probe.
+The `log/` modules also perform read-only checks on each successful fake
+addcont mount. They open `<mount_point>/re_dlc_000.pak` and
+`<mount_point>/sce_sys/pfs-version.dat` from the **game process** and read
+up to 16 bytes from each. `dlc.mount.probe` logs the open/read status and
+hexadecimal prefix (or raw failure code). The exact paths and first bytes help
+check whether the configured mount points resolve to the intended files. A
+missing `re_dlc_000.pak` does not imply failure if a DLC uses a different file.
+The probe never changes the return value, verifies no PAK content or license,
+and cannot tell whether the **game itself** subsequently opens the file.
+The `nolog/` variant does not probe.
+
+Successful and failed fake entitlement-key queries now emit `dlc.app_key.fake`
+and `dlc.np_key.fake`; failing mount requests emit `dlc.mount.fake status=failed`.
+These messages distinguish a game rejecting an entitlement from one that has
+accepted it but fails to process data elsewhere. Default-generated entitlement
+keys are placeholders, not evidence that a game's DRM requirements are met.
 
 The INI reader uses 4096-byte reads and rejects configs above 32 KiB.
 Successful loading reports the actual source path through
