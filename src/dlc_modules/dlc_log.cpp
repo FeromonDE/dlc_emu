@@ -25,14 +25,11 @@ constexpr int kLogMode = 0666;
 constexpr int kLogFlags =
     SCE_KERNEL_O_WRONLY | SCE_KERNEL_O_CREAT | SCE_KERNEL_O_APPEND;
 
-// Prefer a persistent, FTP-accessible log on ShadowMountPlus's /data alias.
-// The configured path is tried first so callers may override it at build time.
-// If that directory cannot be written, try the game's /app0 sandbox.
-// Do not assume /download0, /download1, or /download2 exist: dlc_emu does not
-// create those directories, and this PS5 does not expose them over FTP.
+// This title's /app0 is read-only: do not attempt to write logs into the
+// game image or its sandbox. Use only a persistent path under the writable
+// ShadowMountPlus /data alias. Override it with SCE_DLC_EMU_LOG_PATH if needed.
 const char* const kLogPaths[] = {
     SCE_DLC_EMU_LOG_PATH,
-    "/app0/dlc_emu.log",
 };
 
 std::atomic<const char*> g_logPath{nullptr};
@@ -73,6 +70,17 @@ const char* log_path() {
                 (void)sceKernelClose(fd);
                 break;
             }
+#if SCE_DLC_EMU_LOG_KERNEL_OUT
+            // File output is unavailable. Report this directly through the
+            // kernel log; dlc_logf here would recursively call log_path().
+            if (sceKernelDebugOutText) {
+                char errorLine[256];
+                (void)std::snprintf(errorLine, sizeof(errorLine),
+                                    "dlc.log open failed path=%s rc=0x%08x\n",
+                                    candidate, static_cast<unsigned>(fd));
+                sceKernelDebugOutText(0, errorLine);
+            }
+#endif
         }
         g_logPath.store(chosen, std::memory_order_release);
         g_logPathState.store(2u, std::memory_order_release);
