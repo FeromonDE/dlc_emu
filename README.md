@@ -208,28 +208,40 @@ path of whoever built it.
 
 ## ShadowMountPlus INI I/O diagnostics (PPSA31246)
 
-This fork first tries `/app0/dlc_emu.ini` and, **only if that file cannot be
-opened or read**, retries `/data/shadowmount/PPSA31246/dlc_emu.ini`.
-The fallback is specific to PPSA31246 and can be changed or disabled with
-`SCE_DLC_EMU_INI_FALLBACK_PATH` at build time. Copy the existing INI to this
-writable path via FTP if the `/app0` read fails; the folder must already exist.
-The modules do not create any directories or config files.
+This fork first tries `/app0/dlc_emu.ini`. If the file cannot be opened
+or read, it retries the **independent, persistent** path
+`/data/shadowmount/dlc_emu_PPSA31246.ini`. Place a copy of the existing
+INI there via FTP **before** launching the game. No extra folder is required;
+`/data/shadowmount` already exists on ShadowMountPlus setups.
+
+**Do not use `/data/shadowmount/PPSA31246/dlc_emu.ini` for the fallback:**
+the PPSA31246 subdirectory can be mounted from the game image and be read-only.
+The separate INI filename in the parent directory avoids that mount.
+
+The fallback is specific to PPSA31246 and can be changed or disabled by
+overriding `SCE_DLC_EMU_INI_FALLBACK_PATH` at build time (set to `""` to disable).
+The modules do not create directories or configuration files.
 
 The `log/` modules report `dlc.ini.open`, `dlc.ini.read`, and
 `dlc.ini.fallback` messages, with return code and errno for failures.
-The INI reader uses 4096-byte reads instead of a single large request, and
-still rejects configs larger than 32 KiB. A successful load reports the
-**actual** path via `dlc.load status=ok path=... entries=...`.
-A failed attempt is cached until the game process exits, so fully close and
-relaunch the game after changing the INI. `nolog/` binaries contain the same
-reading and fallback behavior without diagnostic output.
+The INI reader uses 4096-byte reads and rejects configs above 32 KiB.
+Successful loading reports the actual source path through
+`dlc.load status=ok path=... entries=...`.
+
+A failed load remains cached until the game process exits. Fully close and
+restart the game after changing the INI. `nolog/` modules use the same
+INI logic but have no diagnostic output.
 
 ## Logging
 
-Logging is disabled by default. Enable `SCE_DLC_EMU_LOG` in
-`src/dlc_modules/dlc_config.h` or through `DlcExtraPreprocessorDefinitions`.
-Logs are written to `/app0/dlc_emu.log`. `SCE_DLC_EMU_LOG_KERNEL_OUT` also
-enables kernel debug output.
+The `log/` build now writes the persistent file
+`/data/shadowmount/dlc_emu_PPSA31246.log` first, falling back to
+`/app0/dlc_emu.log` only if the first path cannot be opened for append.
+It does **not** rely on `/download0`, `/download1`, or `/download2`,
+which are not guaranteed to exist. The selected path appears in the first
+file line (`dlc.log open version=... path=...`).
+`SCE_DLC_EMU_LOG_KERNEL_OUT` also enables kernel debug output for klogsrv.
+Logging remains disabled in the `nolog/` variant.
 
 ## Known Limitations
 
