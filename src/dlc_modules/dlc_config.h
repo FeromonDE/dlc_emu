@@ -7,7 +7,7 @@
 #pragma once
 
 #ifndef SCE_DLC_EMU_VERSION
-#define SCE_DLC_EMU_VERSION "0.4.1-ini-io"
+#define SCE_DLC_EMU_VERSION "0.4.2-vnode-watch"
 #endif
 
 #ifndef SCE_DLC_EMU_LOG
