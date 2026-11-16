@@ -19,7 +19,7 @@
 #endif
 
 #ifndef SCE_DLC_EMU_LOG_PATH
-#define SCE_DLC_EMU_LOG_PATH "/app0/dlc_emu.log"
+#define SCE_DLC_EMU_LOG_PATH "/download/dlc_emu.log"
 #endif
 
 #ifndef SCE_DLC_EMU_INI_PATH

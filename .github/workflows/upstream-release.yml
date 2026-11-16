@@ -1,0 +1,37 @@
+name: Patch and build upstream releases
+
+on:
+  schedule:
+    - cron: '37 */6 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: upstream-release
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      sha: ${{ steps.sync.outputs.sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+      - name: Merge stable release and reapply diagnostic log patch
+        id: sync
+        run: python3 tools/sync_upstream_release.py
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+  build:
+    needs: sync
+    if: needs.sync.outputs.sha != ''
+    uses: ./.github/workflows/ps5.yml
+    with:
+      source_ref: ${{ needs.sync.outputs.sha }}

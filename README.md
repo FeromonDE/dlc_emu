@@ -210,7 +210,8 @@ path of whoever built it.
 
 Logging is disabled by default. Enable `SCE_DLC_EMU_LOG` in
 `src/dlc_modules/dlc_config.h` or through `DlcExtraPreprocessorDefinitions`.
-Logs are written to `/app0/dlc_emu.log`. `SCE_DLC_EMU_LOG_KERNEL_OUT` also
+Logs are written to `/download/dlc_emu.log`. This keeps diagnostic writes
+outside the mounted game image. `SCE_DLC_EMU_LOG_KERNEL_OUT` also
 enables kernel debug output.
 
 ## Known Limitations
@@ -227,3 +228,9 @@ enables kernel debug output.
 
 Thanks to @idlesauce for
 https://github.com/idlesauce/ps4-eboot-dlc-patcher
+
+## Fork diagnostic builds
+
+This fork keeps diagnostic logs in `/download`, outside mounted game images. Source changes on `main` build and verify the modules and publish the results in this fork's Releases.
+
+The upstream release workflow checks the latest stable release of `sparky3387/dlc_emu` every six hours. New source is merged into this fork, its own CI is preserved, the log patch is reapplied and checked, and a reusable workflow builds and publishes the result. A source conflict or an unexpected logging implementation stops the update for review. Unchanged releases are not rebuilt, and failed builds are retried. Both workflows support manual runs.

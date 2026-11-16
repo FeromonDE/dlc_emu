@@ -25,20 +25,9 @@ constexpr int kLogMode = 0666;
 constexpr int kLogFlags =
     SCE_KERNEL_O_WRONLY | SCE_KERNEL_O_CREAT | SCE_KERNEL_O_APPEND;
 
-// The configured path is tried first so a build-time override always wins. It
-// defaults to /app0, which is where this log wants to be: the game's own deploy
-// directory, writable from inside the sandbox and readable over FTP afterwards
-// with no collector involved.
-//
-// THE CLAIM THIS COMMENT USED TO MAKE WAS WRONG. It said /app0 "is the game
-// image and is mounted READ-ONLY, so opening a log there fails". ShadowMountPlus
-// mount_read_only applies to the IMAGE mounts it manages, not to the game's
-// /app0 sandbox, and a later run measured the open succeeding every time.
-// USER: "app0 is not read only."
-//
-// The remaining entries survive only as fallbacks for a build that overrides
-// the path onto a mount that is not present. /download2 leads them because
-// ShadowMountPlus backs it with a directory on /data.
+// The configured path is tried first so a build-time override always wins.
+// The default /download keeps diagnostic writes outside the mounted game
+// image. The numbered download mounts remain fallbacks if it is unavailable.
 //
 // /temp0 IS DELIBERATELY NOT A CANDIDATE. It is deleted as the process exits
 // and is unreadable in place over FTP (RETR 550, a uid refusal), so anything
